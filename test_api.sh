@@ -2,7 +2,7 @@
 # API测试脚本
 
 API_URL="http://localhost:8000"
-AUDIO_URL="https://znote.tos-cn-beijing.volces.com/audio.mp3"
+AUDIO_URL="https://t1.chatglm.cn/file-test/6938f33f68346bafada40e28.mp3?expired_at=1765340867&sign=b18bc610958a4084c244d3fd21ced635&ext=mp3"
 
 echo "=== 测试火山引擎ASR转录API ==="
 echo ""

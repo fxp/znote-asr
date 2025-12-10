@@ -69,11 +69,23 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
     提交ASR转录任务
     
     Args:
-        audio_url: 音频文件URL
+        audio_url: 音频文件URL（会自动处理重定向）
     
     Returns:
         (task_id, error_message) - 如果成功返回(task_id, None)，失败返回(None, error_message)
     """
+    # 处理URL重定向，获取最终的直接URL
+    try:
+        response = requests.head(audio_url, allow_redirects=True, timeout=10)
+        if response.status_code == 200:
+            final_url = response.url
+            # 如果URL有重定向，使用最终URL
+            if final_url != audio_url:
+                audio_url = final_url
+    except:
+        # 如果HEAD请求失败，继续使用原始URL
+        pass
+    
     # 生成请求ID
     request_id = str(uuid.uuid4())
     
@@ -210,10 +222,22 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
         
         result = response.json()
         
+        # 检查响应头中的状态信息
+        api_status_code = response.headers.get('X-Api-Status-Code', '')
+        api_message = response.headers.get('X-Api-Message', '')
+        
         # 检查是否有错误信息
         if 'error' in result:
             error_msg = result.get('message', result.get('error', 'Unknown error'))
             return None, f"ASR task error: {error_msg}"
+        
+        # 检查API状态码（20000003通常表示无有效语音）
+        if api_status_code and api_status_code != '20000000':
+            if 'no valid speech' in api_message.lower() or 'silence' in api_message.lower():
+                # 音频无有效语音，任务已完成但无转录内容
+                return '', None
+            elif 'error' in api_message.lower() or 'fail' in api_message.lower():
+                return None, f"ASR API error: {api_message}"
         
         # 检查任务状态
         if 'status' in result:
@@ -248,10 +272,14 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
             
             # 如果没有utterances，尝试直接获取text字段
             transcript = result_data.get('text', '')
-            if transcript:
+            # 如果result存在但text为空，且audio_info存在，说明任务已完成但无语音内容
+            if 'audio_info' in result:
+                # 任务已完成，即使文本为空也返回空字符串（表示已完成但无内容）
+                return transcript if transcript else '', None
+            elif transcript:
                 return transcript, None
             
-            # 如果没有文本，可能是还在处理中
+            # 如果没有文本且没有audio_info，可能是还在处理中
             return None, None
         
         # 如果没有result字段，可能是还在处理中

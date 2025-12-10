@@ -342,24 +342,27 @@ async def transcribe_audio_sync(request: TranscribeRequest, db: Session = Depend
             retry_interval=request.retry_interval
         )
         
-        if not transcript:
+        if error_msg:
             # Update status to failed if there's an error message
-            if error_msg:
-                db_task.status = "failed"
-                db_task.error_message = error_msg
-            else:
-                # No error but no transcript, mark as processing (may still be processing)
-                db_task.status = "processing"
+            db_task.status = "failed"
+            db_task.error_message = error_msg
             db.commit()
-            
             raise HTTPException(
                 status_code=500,
-                detail=error_msg or "Failed to get transcription result, task may still be processing"
+                detail=error_msg
+            )
+        elif transcript is None:
+            # Still processing
+            db_task.status = "processing"
+            db.commit()
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to get transcription result, task may still be processing"
             )
         
-        # Update database
+        # Update database (transcript can be empty string if no valid speech)
         db_task.status = "completed"
-        db_task.transcript = transcript
+        db_task.transcript = transcript if transcript else ""  # 空字符串表示已完成但无内容
         from datetime import datetime
         db_task.completed_at = datetime.utcnow()
         db.commit()

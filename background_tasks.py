@@ -83,23 +83,26 @@ class TaskPoller:
                     # 查询转录结果
                     transcript, error_msg = query_asr_result_once(task.task_id)
                     
-                    if transcript:
-                        # 任务完成
-                        task.status = "completed"
-                        task.transcript = transcript
-                        task.completed_at = datetime.utcnow()
-                        task.updated_at = datetime.utcnow()
-                        db.commit()
-                        logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成")
-                    elif error_msg:
+                    if error_msg:
                         # 任务失败，有错误信息
                         task.status = "failed"
                         task.error_message = error_msg
                         task.updated_at = datetime.utcnow()
                         db.commit()
                         logger.warning(f"任务 {task.id} (task_id: {task.task_id}) 失败: {error_msg}")
+                    elif transcript is not None:
+                        # 任务完成（包括空字符串，表示无有效语音）
+                        task.status = "completed"
+                        task.transcript = transcript if transcript else ""  # 保存空字符串表示已完成但无内容
+                        task.completed_at = datetime.utcnow()
+                        task.updated_at = datetime.utcnow()
+                        db.commit()
+                        if transcript:
+                            logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成，转录: {transcript[:50]}...")
+                        else:
+                            logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成，但音频中无有效语音内容")
                     else:
-                        # 任务仍在处理中（没有错误也没有结果）
+                        # 任务仍在处理中（transcript为None表示还在处理）
                         task.updated_at = datetime.utcnow()
                         db.commit()
                         logger.debug(f"任务 {task.id} (task_id: {task.task_id}) 仍在处理中")
