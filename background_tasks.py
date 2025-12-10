@@ -81,7 +81,7 @@ class TaskPoller:
                         db.commit()
                     
                     # 查询转录结果
-                    transcript = query_asr_result_once(task.task_id)
+                    transcript, error_msg = query_asr_result_once(task.task_id)
                     
                     if transcript:
                         # 任务完成
@@ -91,8 +91,15 @@ class TaskPoller:
                         task.updated_at = datetime.utcnow()
                         db.commit()
                         logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成")
+                    elif error_msg:
+                        # 任务失败，有错误信息
+                        task.status = "failed"
+                        task.error_message = error_msg
+                        task.updated_at = datetime.utcnow()
+                        db.commit()
+                        logger.warning(f"任务 {task.id} (task_id: {task.task_id}) 失败: {error_msg}")
                     else:
-                        # 任务仍在处理中
+                        # 任务仍在处理中（没有错误也没有结果）
                         task.updated_at = datetime.utcnow()
                         db.commit()
                         logger.debug(f"任务 {task.id} (task_id: {task.task_id}) 仍在处理中")
@@ -101,7 +108,7 @@ class TaskPoller:
                     logger.error(f"处理任务 {task.id} 时发生错误: {e}", exc_info=True)
                     # 标记为失败
                     task.status = "failed"
-                    task.error_message = str(e)
+                    task.error_message = f"Internal error: {str(e)}"
                     task.updated_at = datetime.utcnow()
                     db.commit()
         

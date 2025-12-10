@@ -10,13 +10,14 @@ from pydantic import BaseModel, HttpUrl
 from typing import Optional, List
 from sqlalchemy.orm import Session
 import uvicorn
+import uuid
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
 
-from asr_transcribe import submit_asr_task, query_asr_result, format_as_openai_message
+from asr_transcribe import submit_asr_task, query_asr_result, format_as_openai_message, validate_audio_url
 from database import init_db, get_db, ASRTask
 from background_tasks import TaskPoller
 
@@ -109,19 +110,51 @@ async def transcribe_audio(request: TranscribeRequest, db: Session = Depends(get
     
     Returns task ID, background task will automatically poll and update results
     """
+    audio_url = str(request.audio_url)
+    
     try:
+        # Validate audio URL before submitting
+        is_valid, error_msg = validate_audio_url(audio_url)
+        if not is_valid:
+            # Create a failed task record
+            db_task = ASRTask(
+                audio_url=audio_url,
+                task_id=f"failed_{uuid.uuid4().hex[:16]}",
+                status="failed",
+                error_message=f"Audio URL validation failed: {error_msg}"
+            )
+            db.add(db_task)
+            db.commit()
+            db.refresh(db_task)
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio URL validation failed: {error_msg}"
+            )
+        
         # Submit to Volcano Engine
-        volc_task_id = submit_asr_task(str(request.audio_url))
+        volc_task_id, error_msg = submit_asr_task(audio_url)
         
         if not volc_task_id:
+            # Create a failed task record
+            db_task = ASRTask(
+                audio_url=audio_url,
+                task_id=f"failed_{uuid.uuid4().hex[:16]}",
+                status="failed",
+                error_message=f"Failed to submit transcription task: {error_msg}"
+            )
+            db.add(db_task)
+            db.commit()
+            db.refresh(db_task)
+            
             raise HTTPException(
                 status_code=500,
-                detail="Failed to submit transcription task"
+                detail=f"Failed to submit transcription task: {error_msg}"
             )
         
         # Save to database
         db_task = ASRTask(
-            audio_url=str(request.audio_url),
+            audio_url=audio_url,
             task_id=volc_task_id,
             status="pending"
         )
@@ -136,6 +169,8 @@ async def transcribe_audio(request: TranscribeRequest, db: Session = Depends(get
             db_id=db_task.id
         )
     
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -248,19 +283,51 @@ async def transcribe_audio_sync(request: TranscribeRequest, db: Session = Depend
     
     This endpoint waits for transcription to complete and returns the result directly, also saves to database
     """
+    audio_url = str(request.audio_url)
+    
     try:
+        # Validate audio URL before submitting
+        is_valid, error_msg = validate_audio_url(audio_url)
+        if not is_valid:
+            # Create a failed task record
+            db_task = ASRTask(
+                audio_url=audio_url,
+                task_id=f"failed_{uuid.uuid4().hex[:16]}",
+                status="failed",
+                error_message=f"Audio URL validation failed: {error_msg}"
+            )
+            db.add(db_task)
+            db.commit()
+            db.refresh(db_task)
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio URL validation failed: {error_msg}"
+            )
+        
         # Submit to Volcano Engine
-        volc_task_id = submit_asr_task(str(request.audio_url))
+        volc_task_id, error_msg = submit_asr_task(audio_url)
         
         if not volc_task_id:
+            # Create a failed task record
+            db_task = ASRTask(
+                audio_url=audio_url,
+                task_id=f"failed_{uuid.uuid4().hex[:16]}",
+                status="failed",
+                error_message=f"Failed to submit transcription task: {error_msg}"
+            )
+            db.add(db_task)
+            db.commit()
+            db.refresh(db_task)
+            
             raise HTTPException(
                 status_code=500,
-                detail="Failed to submit transcription task"
+                detail=f"Failed to submit transcription task: {error_msg}"
             )
         
         # Save to database
         db_task = ASRTask(
-            audio_url=str(request.audio_url),
+            audio_url=audio_url,
             task_id=volc_task_id,
             status="processing"
         )
@@ -269,19 +336,25 @@ async def transcribe_audio_sync(request: TranscribeRequest, db: Session = Depend
         db.refresh(db_task)
         
         # Query result (synchronous wait)
-        transcript = query_asr_result(
+        transcript, error_msg = query_asr_result(
             volc_task_id,
             max_retries=request.max_retries,
             retry_interval=request.retry_interval
         )
         
         if not transcript:
-            # Update status to processing
-            db_task.status = "processing"
+            # Update status to failed if there's an error message
+            if error_msg:
+                db_task.status = "failed"
+                db_task.error_message = error_msg
+            else:
+                # No error but no transcript, mark as processing (may still be processing)
+                db_task.status = "processing"
             db.commit()
+            
             raise HTTPException(
                 status_code=500,
-                detail="Failed to get transcription result, task may still be processing"
+                detail=error_msg or "Failed to get transcription result, task may still be processing"
             )
         
         # Update database

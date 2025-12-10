@@ -1,7 +1,7 @@
 #!/bin/bash
 # API测试脚本
 
-API_URL="http://120.26.141.197:8000"
+API_URL="http://localhost:8000"
 AUDIO_URL="https://znote.tos-cn-beijing.volces.com/audio.mp3"
 
 echo "=== 测试火山引擎ASR转录API ==="
