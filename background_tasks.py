@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-后台任务：定期查询未完成的转录任务
+Background task: Periodically query incomplete transcription tasks
 """
 
 import time
@@ -16,53 +16,53 @@ logger = logging.getLogger(__name__)
 
 
 class TaskPoller:
-    """任务轮询器"""
+    """Task poller"""
     
     def __init__(self, poll_interval: int = 5):
         """
-        初始化任务轮询器
+        Initialize task poller
         
         Args:
-            poll_interval: 轮询间隔（秒）
+            poll_interval: Polling interval in seconds
         """
         self.poll_interval = poll_interval
         self.running = False
         self.thread = None
     
     def start(self):
-        """启动轮询线程"""
+        """Start polling thread"""
         if self.running:
-            logger.warning("轮询器已在运行")
+            logger.warning("Poller is already running")
             return
         
         self.running = True
         self.thread = threading.Thread(target=self._poll_loop, daemon=True)
         self.thread.start()
-        logger.info(f"任务轮询器已启动，轮询间隔: {self.poll_interval}秒")
+        logger.info(f"Task poller started, polling interval: {self.poll_interval} seconds")
     
     def stop(self):
-        """停止轮询线程"""
+        """Stop polling thread"""
         self.running = False
         if self.thread:
             self.thread.join(timeout=5)
-        logger.info("任务轮询器已停止")
+        logger.info("Task poller stopped")
     
     def _poll_loop(self):
-        """轮询循环"""
+        """Polling loop"""
         while self.running:
             try:
                 self._check_pending_tasks()
             except Exception as e:
-                logger.error(f"轮询任务时发生错误: {e}", exc_info=True)
+                logger.error(f"Error while polling tasks: {e}", exc_info=True)
             
-            # 等待指定间隔
+            # Wait for specified interval
             time.sleep(self.poll_interval)
     
     def _check_pending_tasks(self):
-        """检查并更新待处理的任务"""
+        """Check and update pending tasks"""
         db: Session = SessionLocal()
         try:
-            # 查询所有未完成的任务
+            # Query all incomplete tasks
             pending_tasks = db.query(ASRTask).filter(
                 ASRTask.status.in_(["pending", "processing"])
             ).all()
@@ -70,46 +70,46 @@ class TaskPoller:
             if not pending_tasks:
                 return
             
-            logger.info(f"发现 {len(pending_tasks)} 个待处理任务")
+            logger.info(f"Found {len(pending_tasks)} pending tasks")
             
             for task in pending_tasks:
                 try:
-                    # 更新状态为processing（如果还是pending）
+                    # Update status to processing (if still pending)
                     if task.status == "pending":
                         task.status = "processing"
                         task.updated_at = datetime.utcnow()
                         db.commit()
                     
-                    # 查询转录结果
+                    # Query transcription result
                     transcript, error_msg = query_asr_result_once(task.task_id)
                     
                     if error_msg:
-                        # 任务失败，有错误信息
+                        # Task failed, has error message
                         task.status = "failed"
                         task.error_message = error_msg
                         task.updated_at = datetime.utcnow()
                         db.commit()
-                        logger.warning(f"任务 {task.id} (task_id: {task.task_id}) 失败: {error_msg}")
+                        logger.warning(f"Task {task.id} (task_id: {task.task_id}) failed: {error_msg}")
                     elif transcript is not None:
-                        # 任务完成（包括空字符串，表示无有效语音）
+                        # Task completed (including empty string, meaning no valid speech)
                         task.status = "completed"
-                        task.transcript = transcript if transcript else ""  # 保存空字符串表示已完成但无内容
+                        task.transcript = transcript if transcript else ""  # Save empty string to indicate completed but no content
                         task.completed_at = datetime.utcnow()
                         task.updated_at = datetime.utcnow()
                         db.commit()
                         if transcript:
-                            logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成，转录: {transcript[:50]}...")
+                            logger.info(f"Task {task.id} (task_id: {task.task_id}) completed, transcript: {transcript[:50]}...")
                         else:
-                            logger.info(f"任务 {task.id} (task_id: {task.task_id}) 已完成，但音频中无有效语音内容")
+                            logger.info(f"Task {task.id} (task_id: {task.task_id}) completed, but no valid speech in audio")
                     else:
-                        # 任务仍在处理中（transcript为None表示还在处理）
+                        # Task still processing (transcript is None means still processing)
                         task.updated_at = datetime.utcnow()
                         db.commit()
-                        logger.debug(f"任务 {task.id} (task_id: {task.task_id}) 仍在处理中")
+                        logger.debug(f"Task {task.id} (task_id: {task.task_id}) still processing")
                 
                 except Exception as e:
-                    logger.error(f"处理任务 {task.id} 时发生错误: {e}", exc_info=True)
-                    # 标记为失败
+                    logger.error(f"Error processing task {task.id}: {e}", exc_info=True)
+                    # Mark as failed
                     task.status = "failed"
                     task.error_message = f"Internal error: {str(e)}"
                     task.updated_at = datetime.utcnow()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-数据库模型和操作
+Database models and operations
 """
 
 from sqlalchemy import create_engine, Column, String, Integer, DateTime, Text
@@ -9,27 +9,27 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 import os
 
-# 数据库文件路径（使用相对路径，便于迁移）
+# Database file path (use relative path for easy migration)
 DB_PATH = os.getenv("DB_PATH", "asr_tasks.db")
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
-# 创建数据库引擎
+# Create database engine
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
-# 创建会话工厂
+# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# 声明基类
+# Declare base class
 Base = declarative_base()
 
 
 class ASRTask(Base):
-    """ASR转录任务模型"""
+    """ASR transcription task model"""
     __tablename__ = "asr_tasks"
     
     id = Column(Integer, primary_key=True, index=True)
     audio_url = Column(String, nullable=False, index=True)
-    task_id = Column(String, unique=True, nullable=False, index=True)  # 火山引擎返回的任务ID
+    task_id = Column(String, unique=True, nullable=False, index=True)  # Task ID returned by Volcano Engine
     status = Column(String, default="pending", index=True)  # pending, processing, completed, failed
     transcript = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
@@ -38,7 +38,7 @@ class ASRTask(Base):
     completed_at = Column(DateTime, nullable=True)
     
     def to_dict(self):
-        """转换为字典"""
+        """Convert to dictionary"""
         return {
             "id": self.id,
             "audio_url": self.audio_url,
@@ -53,12 +53,12 @@ class ASRTask(Base):
 
 
 def init_db():
-    """初始化数据库"""
+    """Initialize database"""
     Base.metadata.create_all(bind=engine)
 
 
 def get_db():
-    """获取数据库会话"""
+    """Get database session"""
     db = SessionLocal()
     try:
         yield db

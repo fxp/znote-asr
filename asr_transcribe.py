@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-使用火山引擎ASR服务对音频文件进行转录
-将结果转换为OpenAI兼容的message格式并保存
+Volcano Engine ASR transcription service
+Provides functions for submitting and querying ASR transcription tasks
 """
 
 import requests
@@ -27,14 +27,14 @@ ASR_QUERY_URL = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/query'
 
 def validate_audio_url(audio_url: str, timeout: int = 10) -> Tuple[bool, Optional[str]]:
     """
-    验证音频URL是否可访问
+    Validate if audio URL is accessible
     
     Args:
-        audio_url: 音频文件URL
-        timeout: 超时时间（秒）
+        audio_url: Audio file URL
+        timeout: Timeout in seconds
     
     Returns:
-        (是否可访问, 错误信息)
+        (is_accessible, error_message)
     """
     try:
         response = requests.head(audio_url, timeout=timeout, allow_redirects=True)
@@ -66,15 +66,15 @@ def validate_audio_url(audio_url: str, timeout: int = 10) -> Tuple[bool, Optiona
 
 def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    提交ASR转录任务
+    Submit ASR transcription task
     
     Args:
-        audio_url: 音频文件URL（会自动处理重定向）
+        audio_url: Audio file URL (redirects are handled automatically)
     
     Returns:
-        (task_id, error_message) - 如果成功返回(task_id, None)，失败返回(None, error_message)
+        (task_id, error_message) - Returns (task_id, None) on success, (None, error_message) on failure
     """
-    # 处理URL重定向，获取最终的直接URL
+    # Handle URL redirects to get the final direct URL
     try:
         response = requests.head(audio_url, allow_redirects=True, timeout=10)
         if response.status_code == 200:
@@ -86,10 +86,10 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
         # 如果HEAD请求失败，继续使用原始URL
         pass
     
-    # 生成请求ID
+    # Generate request ID
     request_id = str(uuid.uuid4())
     
-    # 构建请求头
+    # Build request headers
     headers = {
         'Content-Type': 'application/json',
         'x-api-key': API_KEY,
@@ -98,7 +98,7 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
         'X-Api-Sequence': '-1'
     }
     
-    # 构建请求体
+    # Build request payload
     payload = {
         'user': {
             'uid': 'doubao_voice'
@@ -116,9 +116,9 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
             'enable_itn': True,
             'enable_punc': False,
             'enable_ddc': False,
-            'enable_speaker_info': True,  # 启用说话人识别
+            'enable_speaker_info': True,  # Enable speaker identification
             'enable_channel_split': False,
-            'show_utterances': True,  # 显示说话片段，配合说话人识别使用
+            'show_utterances': True,  # Show utterances for speaker info
             'vad_segment': False,
             'sensitive_words_filter': ''
         }
@@ -145,12 +145,12 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
                 error_msg = f"ASR API returned status code {response.status_code}: {response.text[:200]}"
             return None, error_msg
         
-        # 从响应头获取task_id
+        # Get task_id from response headers
         task_id = response.headers.get('X-Api-Request-Id')
         if task_id:
             return task_id, None
         
-        # 如果响应头中没有，尝试从响应体获取
+        # If not in headers, try to get from response body
         try:
             result = response.json()
             if 'task_id' in result:
@@ -183,13 +183,13 @@ def submit_asr_task(audio_url: str) -> Tuple[Optional[str], Optional[str]]:
 
 def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    单次查询ASR转录结果（不重试）
+    Query ASR transcription result once (no retry)
     
     Args:
-        task_id: 任务ID
+        task_id: Task ID
     
     Returns:
-        (transcript, error_message) - 如果成功返回(transcript, None)，如果还在处理返回(None, None)，如果失败返回(None, error_message)
+        (transcript, error_message) - Returns (transcript, None) on success, (None, None) if still processing, (None, error_message) on failure
     """
     headers = {
         'Content-Type': 'application/json',
@@ -222,57 +222,57 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
         
         result = response.json()
         
-        # 检查响应头中的状态信息
+        # Check status information in response headers
         api_status_code = response.headers.get('X-Api-Status-Code', '')
         api_message = response.headers.get('X-Api-Message', '')
         
-        # 检查是否有错误信息
+        # Check for error messages
         if 'error' in result:
             error_msg = result.get('message', result.get('error', 'Unknown error'))
             return None, f"ASR task error: {error_msg}"
         
-        # 检查API状态码
-        # 20000000: 成功
-        # 20000001: 处理中
-        # 20000003: 无有效语音
+        # Check API status codes
+        # 20000000: Success
+        # 20000001: Processing
+        # 20000003: No valid speech
         if api_status_code:
             if api_status_code == '20000001':
-                # 任务还在处理中
+                # Task still processing
                 return None, None
             elif api_status_code == '20000003':
-                # 音频无有效语音，任务已完成但无转录内容
+                # No valid speech in audio, task completed but no transcription
                 return '', None
             elif api_status_code != '20000000':
-                # 其他错误状态码
+                # Other error status codes
                 if 'no valid speech' in api_message.lower() or 'silence' in api_message.lower():
                     return '', None
                 elif 'error' in api_message.lower() or 'fail' in api_message.lower():
                     return None, f"ASR API error: {api_message}"
-                # 如果是其他未知状态码，但消息显示处理中，继续等待
+                # If other unknown status code but message shows processing, continue waiting
                 if 'processing' in api_message.lower() or 'start processing' in api_message.lower():
                     return None, None
         
-        # 检查任务状态
+        # Check task status
         if 'status' in result:
             status = result['status']
             if status == 'failed' or status == 'error':
                 error_msg = result.get('message', result.get('error', 'Task failed'))
                 return None, f"ASR task failed: {error_msg}"
             elif status == 'processing' or status == 'pending':
-                # 任务仍在处理中
+                # Task still processing
                 return None, None
         
-        # 提取转录文本（支持说话人识别）
+        # Extract transcription text (supports speaker identification)
         if 'result' in result:
             result_data = result['result']
             
-            # 如果启用了说话人识别，结果可能包含utterances数组
+            # If speaker identification is enabled, result may contain utterances array
             if 'utterances' in result_data and isinstance(result_data['utterances'], list):
-                # 构建带说话人信息的文本
+                # Build text with speaker information
                 transcript_parts = []
                 for utterance in result_data['utterances']:
                     text = utterance.get('text', '')
-                    # 说话人ID可能在speaker_id、speaker字段，或者在additions.speaker中
+                    # Speaker ID might be in speaker_id, speaker field, or in additions.speaker
                     speaker_id = (
                         utterance.get('speaker_id') or 
                         utterance.get('speaker') or
@@ -288,26 +288,26 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
                 if transcript_parts:
                     transcript = '\n'.join(transcript_parts)
                     return transcript, None
-                # 如果utterances存在但transcript_parts为空，说明utterances数组为空或所有text都为空
-                # 这种情况下，如果audio_info存在，说明任务已完成但无有效语音
+                # If utterances exist but transcript_parts is empty, it means the utterances array is empty or all text is empty
+                # In this case, if audio_info exists, it means the task is completed but with no valid speech
                 if 'audio_info' in result:
                     return '', None
-                # 否则可能还在处理中
+                # Otherwise, it might still be processing
                 return None, None
             
-            # 如果没有utterances，尝试直接获取text字段
+            # If no utterances, try to get the text field directly
             transcript = result_data.get('text', '')
-            # 如果result存在但text为空，且audio_info存在，说明任务已完成但无语音内容
+            # If result exists but text is empty, and audio_info exists, it means the task is completed but with no speech content
             if 'audio_info' in result:
-                # 任务已完成，即使文本为空也返回空字符串（表示已完成但无内容）
+                # Task completed, even if text is empty, return empty string (means completed but no content)
                 return transcript if transcript else '', None
             elif transcript:
                 return transcript, None
             
-            # 如果没有文本且没有audio_info，可能是还在处理中
+            # If no text and no audio_info, it might still be processing
             return None, None
         
-        # 如果没有result字段，可能是还在处理中
+        # If no result field, it might still be processing
         return None, None
         
     except requests.exceptions.Timeout:
@@ -328,15 +328,15 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
 
 def query_asr_result(task_id: str, max_retries: int = 30, retry_interval: int = 3) -> Tuple[Optional[str], Optional[str]]:
     """
-    查询ASR转录结果（带重试）
+    Query ASR transcription result (with retry)
     
     Args:
-        task_id: 任务ID
-        max_retries: 最大重试次数
-        retry_interval: 重试间隔（秒）
+        task_id: Task ID
+        max_retries: Maximum retry count
+        retry_interval: Retry interval in seconds
     
     Returns:
-        (transcript, error_message) - 如果成功返回(transcript, None)，如果失败返回(None, error_message)
+        (transcript, error_message) - Returns (transcript, None) on success, (None, error_message) on failure
     """
     for attempt in range(max_retries):
         if attempt > 0:
@@ -344,37 +344,37 @@ def query_asr_result(task_id: str, max_retries: int = 30, retry_interval: int = 
         
         transcript, error_msg = query_asr_result_once(task_id)
         
-        # transcript is not None 表示任务已完成
-        # 但如果是空字符串，需要检查是否真的是无有效语音，还是任务还在处理中
+        # transcript is not None means the task is completed
+        # But if it's an empty string, we need to check if it's truly no valid speech, or if the task is still processing
         if transcript is not None:
-            # 如果transcript是空字符串，可能是无有效语音，也可能是任务还在处理中
-            # 为了安全起见，如果transcript是空字符串且没有error_msg，再等待一次确认
+            # If transcript is an empty string, it might be no valid speech, or the task is still processing
+            # To be safe, if transcript is an empty string and there's no error_msg, wait one more time to confirm
             if transcript == '' and error_msg is None and attempt < max_retries - 1:
-                # 再等待一次，确认是否真的是无有效语音
+                # Wait one more time to confirm if it's truly no valid speech
                 time.sleep(retry_interval)
                 transcript2, error_msg2 = query_asr_result_once(task_id)
                 if transcript2 is not None:
                     return transcript2, error_msg2
-                # 如果第二次查询还是None，说明可能还在处理中，继续循环
+                # If the second query is still None, it means it might still be processing, continue loop
                 continue
             return transcript, None
         
         if error_msg:
-            # 如果是错误，直接返回
+            # If it's an error, return directly
             if attempt < max_retries - 1:
-                # 某些错误可能是暂时的，继续重试
+                # Some errors might be temporary, continue retrying
                 if "Timeout" in error_msg or "Connection" in error_msg:
-                    print(f"查询请求异常: {error_msg}，重试中... (尝试 {attempt + 1}/{max_retries})")
+                    print(f"Query request exception: {error_msg}, retrying... (attempt {attempt + 1}/{max_retries})")
                     continue
                 else:
-                    # 其他错误（如任务失败）直接返回
+                    # Other errors (like task failed) return directly
                     return None, error_msg
             else:
                 return None, error_msg
         
-        # 如果没有错误也没有结果，说明还在处理中
+        # If no error and no result, it means it's still processing
         if attempt < max_retries - 1:
-            print(f"转录进行中... (尝试 {attempt + 1}/{max_retries})")
+            print(f"Transcription in progress... (attempt {attempt + 1}/{max_retries})")
         else:
             return None, f"Exceeded maximum retry count ({max_retries}), task may still be processing"
     
@@ -382,7 +382,7 @@ def query_asr_result(task_id: str, max_retries: int = 30, retry_interval: int = 
 
 
 def format_as_openai_message(transcript):
-    """将转录结果格式化为OpenAI兼容的message格式"""
+    """Format transcription result as OpenAI-compatible message format"""
     return {
         "id": f"msg_{uuid.uuid4().hex[:16]}",
         "object": "chat.completion.message",
@@ -398,50 +398,3 @@ def format_as_openai_message(transcript):
     }
 
 
-def save_transcript(message, output_file='transcript.json'):
-    """保存转录结果到本地文件"""
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(message, f, ensure_ascii=False, indent=2)
-    print(f"转录结果已保存到: {output_file}")
-
-
-def main():
-    """主函数"""
-    # 音频文件URL（需要替换为实际的音频URL）
-    audio_url = 'https://znote.tos-cn-beijing.volces.com/audio.mp3'
-    
-    print(f"使用音频URL: {audio_url}")
-    
-    # 验证URL
-    print("正在验证音频URL...")
-    is_valid, error_msg = validate_audio_url(audio_url)
-    if not is_valid:
-        print(f"音频URL验证失败: {error_msg}")
-        return
-    
-    print("音频URL验证成功")
-    print("正在提交ASR转录任务...")
-    task_id, error_msg = submit_asr_task(audio_url)
-    
-    if not task_id:
-        print(f"提交任务失败: {error_msg}")
-        return
-    
-    print(f"任务提交成功，任务ID: {task_id}")
-    print("正在查询转录结果...")
-    transcript, error_msg = query_asr_result(task_id)
-    
-    if not transcript:
-        print(f"获取转录结果失败: {error_msg}")
-        return
-    
-    print(f"转录成功！转录文本: {transcript[:100]}...")
-    
-    # 格式化为OpenAI message格式并保存
-    openai_message = format_as_openai_message(transcript)
-    save_transcript(openai_message)
-    print("完成！")
-
-
-if __name__ == '__main__':
-    main()
