@@ -231,13 +231,26 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
             error_msg = result.get('message', result.get('error', 'Unknown error'))
             return None, f"ASR task error: {error_msg}"
         
-        # 检查API状态码（20000003通常表示无有效语音）
-        if api_status_code and api_status_code != '20000000':
-            if 'no valid speech' in api_message.lower() or 'silence' in api_message.lower():
+        # 检查API状态码
+        # 20000000: 成功
+        # 20000001: 处理中
+        # 20000003: 无有效语音
+        if api_status_code:
+            if api_status_code == '20000001':
+                # 任务还在处理中
+                return None, None
+            elif api_status_code == '20000003':
                 # 音频无有效语音，任务已完成但无转录内容
                 return '', None
-            elif 'error' in api_message.lower() or 'fail' in api_message.lower():
-                return None, f"ASR API error: {api_message}"
+            elif api_status_code != '20000000':
+                # 其他错误状态码
+                if 'no valid speech' in api_message.lower() or 'silence' in api_message.lower():
+                    return '', None
+                elif 'error' in api_message.lower() or 'fail' in api_message.lower():
+                    return None, f"ASR API error: {api_message}"
+                # 如果是其他未知状态码，但消息显示处理中，继续等待
+                if 'processing' in api_message.lower() or 'start processing' in api_message.lower():
+                    return None, None
         
         # 检查任务状态
         if 'status' in result:
@@ -259,7 +272,13 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
                 transcript_parts = []
                 for utterance in result_data['utterances']:
                     text = utterance.get('text', '')
-                    speaker_id = utterance.get('speaker_id', utterance.get('speaker', ''))
+                    # 说话人ID可能在speaker_id、speaker字段，或者在additions.speaker中
+                    speaker_id = (
+                        utterance.get('speaker_id') or 
+                        utterance.get('speaker') or
+                        (utterance.get('additions', {}).get('speaker') if isinstance(utterance.get('additions'), dict) else None) or
+                        ''
+                    )
                     if text:
                         if speaker_id:
                             transcript_parts.append(f"[说话人{speaker_id}] {text}")
@@ -269,6 +288,12 @@ def query_asr_result_once(task_id: str) -> Tuple[Optional[str], Optional[str]]:
                 if transcript_parts:
                     transcript = '\n'.join(transcript_parts)
                     return transcript, None
+                # 如果utterances存在但transcript_parts为空，说明utterances数组为空或所有text都为空
+                # 这种情况下，如果audio_info存在，说明任务已完成但无有效语音
+                if 'audio_info' in result:
+                    return '', None
+                # 否则可能还在处理中
+                return None, None
             
             # 如果没有utterances，尝试直接获取text字段
             transcript = result_data.get('text', '')
@@ -319,7 +344,19 @@ def query_asr_result(task_id: str, max_retries: int = 30, retry_interval: int = 
         
         transcript, error_msg = query_asr_result_once(task_id)
         
-        if transcript:
+        # transcript is not None 表示任务已完成
+        # 但如果是空字符串，需要检查是否真的是无有效语音，还是任务还在处理中
+        if transcript is not None:
+            # 如果transcript是空字符串，可能是无有效语音，也可能是任务还在处理中
+            # 为了安全起见，如果transcript是空字符串且没有error_msg，再等待一次确认
+            if transcript == '' and error_msg is None and attempt < max_retries - 1:
+                # 再等待一次，确认是否真的是无有效语音
+                time.sleep(retry_interval)
+                transcript2, error_msg2 = query_asr_result_once(task_id)
+                if transcript2 is not None:
+                    return transcript2, error_msg2
+                # 如果第二次查询还是None，说明可能还在处理中，继续循环
+                continue
             return transcript, None
         
         if error_msg:

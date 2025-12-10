@@ -1,10 +1,62 @@
 #!/bin/bash
 # API测试脚本
 
-API_URL="http://localhost:8000"
-AUDIO_URL="https://t1.chatglm.cn/file-test/6938f33f68346bafada40e28.mp3?expired_at=1765340867&sign=b18bc610958a4084c244d3fd21ced635&ext=mp3"
+# 默认值
+DEFAULT_API_URL="http://localhost:8000"
+API_URL=""
+AUDIO_URL=""
+
+# 显示使用说明
+show_usage() {
+    echo "用法: $0 [选项]"
+    echo ""
+    echo "选项:"
+    echo "  -u, --url URL        指定API服务地址 (默认: $DEFAULT_API_URL)"
+    echo "  -a, --audio URL      指定音频文件URL (必需)"
+    echo "  -h, --help           显示此帮助信息"
+    echo ""
+    echo "示例:"
+    echo "  $0 -u http://localhost:8000 -a https://example.com/audio.mp3"
+    echo "  $0 --url http://120.26.141.197:8000 --audio https://example.com/audio.mp3"
+    exit 1
+}
+
+# 解析命令行参数
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -u|--url)
+            API_URL="$2"
+            shift 2
+            ;;
+        -a|--audio)
+            AUDIO_URL="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_usage
+            ;;
+        *)
+            echo "❌ 未知参数: $1"
+            show_usage
+            ;;
+    esac
+done
+
+# 检查必需参数
+if [ -z "$AUDIO_URL" ]; then
+    echo "❌ 错误: 必须指定音频URL"
+    echo ""
+    show_usage
+fi
+
+# 如果没有指定API_URL，使用默认值
+if [ -z "$API_URL" ]; then
+    API_URL="$DEFAULT_API_URL"
+fi
 
 echo "=== 测试火山引擎ASR转录API ==="
+echo "API地址: $API_URL"
+echo "音频URL: $AUDIO_URL"
 echo ""
 
 # 检查API服务是否运行
